@@ -13,7 +13,7 @@
 #include "RenderingMesh.h"
 #include <thread>
 #include <igl/writeOBJ.h>
-#include "ArbitraryPrecision.h"
+#include <vector>
 
 using namespace std;
 using namespace Eigen;
@@ -86,6 +86,7 @@ int main(int argc, char* argv[]){
 
 	LameFirst = constE*nu/(1+nu)/(1-2*nu);
 	LameSecond = constE/2/(1+nu);
+	params.SetParams(constE, nu);
 	
 	NTri=F.rows();
 	NNode=V.rows();	
@@ -103,7 +104,6 @@ int main(int argc, char* argv[]){
 	MassInv = InverseMass();
         MachineDirection = CalcMD(GlobalMD);
         EdgeF=NeighborF(); 
-        EdgeF=NeighborF();
         EdgeNV=VofEdgeN();
         MatrixXd FNbar(NTri,3);
 	igl::per_face_normals(Vbar, F, FNbar);
@@ -117,7 +117,8 @@ int main(int argc, char* argv[]){
         IAold.resize(2*NTri,2);
         IBold.resize(2*NTri,2);
 	tcount =0; // Total time step
-	while(true){
+	//while(true){
+	while(tcount<5){
 	  if ((tcount%storefreq)==0){
 	  	stringstream FileName;
 	  	FileName << objname << tcount/storefreq+InitialNum << ".obj"; 
@@ -134,10 +135,12 @@ int main(int argc, char* argv[]){
 }
       
 //CalcIAbar calculates IAbar and IBbar based on the moisture distribution assuming that only upper surface changes and the lower surface remains intact
-void CalcIbar(){
+void CalcIbar(vector<Matrix2m> *abars, vector<Matrix2m> *bbars){
 	int NTri = F.rows();
 	MatrixXd IAtot(2*NTri,2), IBtot(2*NTri,2), Itot(4*NTri,2),FN(NTri,3), EN(3*NTri,3);
-	Matrix2d IAbarnew, IBbarnew;
+	Matrix2m IAbarnew, IBbarnew;
+	//abars.resize(NTri);
+	//bbars.resize(NTri);
 //	igl::per_face_normals(V, F, FN);
 //	EN=Enormal(FN);
 	for (int i=0; i<NTri; i++){
@@ -210,6 +213,10 @@ void CalcIbar(){
 		*/
 		IAtot.block(2*i,0,2,2)=IAbarnew;
 		IBtot.block(2*i,0,2,2)=IBbarnew;
+	//	abars[i]=IAbarnew;	
+	//	bbars[i]=IBbarnew;
+		abars->push_back(IAbarnew);	
+		bbars->push_back(IBbarnew);	
 		
 		/* // Sometimes with a bad mesh there would be a slight discrepancy between IAbarnew and IA even with moisture 
  * 		// difference is zero. Below is the test code for the discrepancy.  
@@ -286,6 +293,8 @@ bool pre_draw(igl::viewer::Viewer& viewer){
 void Sim(){
         VectorXd gravity(NNode);
         gravity.setConstant(100*delt);
+	vector<Matrix2m> abars, bbars;
+        CalcIbar(&abars, &bbars);
 	
 	//----------------------Update with Implicit Euler---------------------------------------
 	if(Implicit == 1){
@@ -307,7 +316,6 @@ void Sim(){
            SparseMatrix<double> hEnergy1(3*NNode,3*NNode), hEnergy2(3*NNode,3*NNode);
            // Solve with Newton's Method
 	   SimulationMesh *sm;
-	   int count=0;
            
 	   //Use explicit Euler as the initial guess
            VectorXd guess = VectorXd(Pos);
@@ -316,8 +324,7 @@ void Sim(){
            while(residual > ImpTolerance){
  	     Vtemp = VectoMatrix(guess);
              sm = new SimulationMesh(Vbar, Vtemp, F, t);
-             sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2);
-
+             sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2, abars, bbars);
              //Calculate force differential
              SparseMatrix<double> dForces;
              dForces = identityMatrix + delt * delt * MassInv * hEnergy1;
@@ -332,16 +339,16 @@ void Sim(){
 
              // Calculate residual
              residual = fguess.norm();
-             if (count%100==0){
-                cout <<  "residual" << endl << residual << endl;
-	     }
+             //if (count%100==0){
+             //   cout <<  "residual" << endl << residual << endl;
+	     //}
+	     
 	   }
 	   Pos = guess;
 	   V = VectoMatrix(Pos);
            sm = new SimulationMesh(Vbar, V, F, t);
-           sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2);
+           sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2, abars, bbars);
 	   Vel -= delt * MassInv * dE; 
-	   cout << "tcount    " << tcount << endl << Pos << endl;
 	}
         
 
@@ -349,9 +356,17 @@ void Sim(){
 	//----------------------Update with Verlocity Verlet---------------------------------------
 	if(Implicit == 0){
 	   V+=velocity*delt;
-	   CalcIbar();
            MatrixXd FFtot;
            FFtot=Force();
+//	   SimulationMesh *sm;
+//           VectorXm dE(3*NNode);
+//           SparseMatrix<double> hEnergy1(3*NNode,3*NNode), hEnergy2(3*NNode,3*NNode);
+//           sm = new SimulationMesh(Vbar, V, F, t);
+//           sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2, abars, bbars);
+//	   if(tcount < 5){
+//		cout << "Velet" << FFtot << endl << "Implicit Force" << endl << dE << endl;
+//	   }
+           
 	   int j;
            for (j=0; j<NNode; j++){
              velocity.row(j)+=FFtot.row(j)*delt/Mass(j);

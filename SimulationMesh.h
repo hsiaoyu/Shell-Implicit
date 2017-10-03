@@ -1,8 +1,9 @@
 #ifndef SIMULATIONMESH_H
 #define SIMULATIONMESH_H
 
-#include <Eigen/Sparse>
 #include "MaterialParameters.h"
+#include <Eigen/Sparse>
+#include <Eigen/Core>
 #include <vector>
 #include "/u/hsiaoyu/Documents/evouga/ShellOptimization/alglib/src/optimization.h"
 #include "ArbitraryPrecision.h"
@@ -12,7 +13,8 @@ class RenderingMesh;
 class SimulationMesh
 {
 public:
-    SimulationMesh(Eigen::MatrixX3d Vbar, Eigen::MatrixX3d V, Eigen::MatrixX3i F, double thickness);
+    SimulationMesh(const Eigen::MatrixX3d &Vbar, const Eigen::MatrixX3d &V, const Eigen::MatrixX3i &F, double thickness);
+    //SimulationMesh(const Eigen::MatrixX3d &V, const Eigen::MatrixX3i &F, double thickness);
     friend SimulationMesh *parseCirclePacking(const std::string &vertexFile, const std::string &faceFile, const std::string &conformalFactorFile, double scale, double thickness);
     
     const MatrixX3m &getOriginalV() { return originalV; }
@@ -20,7 +22,9 @@ public:
 
     void faceEnergyDensities(const MatrixX3m &V, VectorXm &densities);
 
-    void testElasticEnergy(VectorXm *dE, Eigen::SparseMatrix<double> *hEnergy1, Eigen::SparseMatrix<double> *hEnergy2);
+    //void testElasticEnergy();
+    //void testElasticEnergy(const std::vector<Matrix2m> &abars, const std::vector<Matrix2m> &bbars);
+    void testElasticEnergy(VectorXm *dE, Eigen::SparseMatrix<double> *hEnergy1, Eigen::SparseMatrix<double> *hEnergy2, const std::vector<Matrix2m> &abars, const std::vector<Matrix2m> &bbars);
     void lineSearch(const MatrixX3m &V, const std::vector<Matrix2m> &targetas, const VectorXm &deltaV, scalar &alpha, scalar &energy);
     void minimizeElasticEnergyNewton(MatrixX3m &V, int substeps, RenderingMesh &rm);
     std::vector<Matrix2m> baras;

@@ -3,12 +3,14 @@
 #include <Eigen/Geometry>
 #include <igl/per_face_normals.h>
 #include <igl/per_edge_normals.h>
+#include "ArbitraryPrecision.h"
+
 using namespace Eigen;
 typedef Matrix<double, 6, 6> Matrix6d;
 typedef Matrix<double, 6, 1> Vector6d;
 typedef Vector6d (*FuncRHS) (int);
 
-void CalcIbar();
+void CalcIbar(std::vector<Matrix2m> *abars, std::vector<Matrix2m> *bbars);
 MatrixXd CalcMD(MatrixXd GlobalMD);
 void Sim();
 VectorXd VMass();

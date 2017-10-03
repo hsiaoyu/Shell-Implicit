@@ -46,7 +46,6 @@ scalar triangleStretchingEnergy(
         }
         
         if(dEnergy)
-            //*dEnergy = h*params.LameAlpha()* dA / 4.0 * M.trace() * deriv1 + h*params.LameBeta() * dA / 4.0 * deriv2;        
             *dEnergy = h*params.LameAlpha()* dA / 4.0 * M.trace() * deriv1 + h*params.LameBeta() * dA / 2.0 * deriv2;        
 
         if (hEnergyInexact)
@@ -241,6 +240,7 @@ scalar shellEnergy(
     const Eigen::MatrixX3i &F,
     const Eigen::MatrixX3i &faceWings,
     const std::vector<Matrix2m> &abars,
+    const std::vector<Matrix2m> &bbars,
     const VectorXm &faceThicknesses,
     const MaterialParameters &params,
     VectorXm *dEnergy,
@@ -314,8 +314,8 @@ scalar shellEnergy(
         Matrix<scalar, 18, 18> hE;
         Vector3i face = F.row(i);
         Vector3i wing = faceWings.row(i);
-        Matrix2m bbar;
-        bbar.setZero();
+   //     Matrix2m bbar;
+   //     bbar.setZero();
 
         Vector3m wingverts[3];
         for (int j = 0; j < 3; j++)
@@ -325,7 +325,7 @@ scalar shellEnergy(
             wing[0] == -1 ? NULL : &wingverts[0],
             wing[1] == -1 ? NULL : &wingverts[1],
             wing[2] == -1 ? NULL : &wingverts[2],
-            abars[i], bbar, faceThicknesses[i], params, dEnergy ? &dE : NULL, (hEnergyExact || hEnergyInexact) ? &hE : NULL);        
+            abars[i], bbars[i], faceThicknesses[i], params, dEnergy ? &dE : NULL, (hEnergyExact || hEnergyInexact) ? &hE : NULL);        
         
         result += benergy;
         if (triangleEnergies)
