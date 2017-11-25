@@ -18,7 +18,6 @@
 using namespace std;
 using namespace Eigen;
 
-MaterialParameters params;
 Matrix2d CanonM1, CanonM2, CanonM3;
 double area=0.5, constE, nu, t, delt, ShrinkCoeffMD, ShrinkCoeffCD, rho, DiffusionCoeff, Dissipation, cdamp1, cdamp2, sourcetime, SourceZ, LameFirst, LameSecond, ImpTolerance; // area of the canonical triangle
 MatrixXd velocity, V, Vbar, ENbar, Ibartot, MachineDirection, IAold, IBold;// ENbar is the edge normal of Vbar
@@ -26,13 +25,14 @@ MatrixXi F, EdgeNV; // Eash row of EdgeNV(3*NTri,4) stores the index off the fou
 VectorXi EdgeF;// EdgeF(3*NTri) stores the index of the  adjecent face of the edge other than the face that is indicated by the vector index 
 int NNode, gflag, tcount, storefreq, InitialNum, SourceType; // NNode is the total # of nodes
 Vector3d V_ini1, V_ini2; // Vini1, Vini2 are the fixed points of V when enabled gravity
-VectorXd Moisture_v, RHS_F, Mass, Pos, Vel;
+VectorXd Moisture_v, RHS_F, Mass, Pos, Vel, Moist_source;
 SparseMatrix<double> Mtot_Mass, Mtot_Stiffness;
 MatrixXd Vtime; // Vtime stores the vertices at each time 
 string objname, moistname;
-bool DampingForce_Enabled, Implicit;
-FuncRHS funcRHS[2]={UniTopF_prism,PlaneSourceBot};
-DiagonalMatrix<double,Dynamic> MassInv;
+bool DampingForce_Enabled, Implicit, forceMD=0;
+FuncRHS funcRHS[1]={UniTopF_prism};
+DiagonalMatrix<double,Dynamic> MassInv, MassVec;
+vector<Matrix2m> a_prev, b_prev;
 
 ofstream myfile;
 int main(int argc, char* argv[]){
@@ -59,6 +59,7 @@ int main(int argc, char* argv[]){
         const char *cstr3 = str.c_str();
         // Moisture_v(i) stores the moist of vertice i and Moisture_v(i+NNode) stores the value for the corresponding lower surface
         igl::readDMAT(cstr3, Moisture_v);
+        Moist_source = Moisture_v; // If a source exist the moisture to be added at each time step would be the same as the initial source
         getline(Infile,objname); 
         getline(Infile,moistname); 
         Infile >> constE;
@@ -80,17 +81,16 @@ int main(int argc, char* argv[]){
 	Infile >> InitialNum; // starting file number for recording the animation 
 	// 0-No source, 1-Const Dissipation, 2- Source at certain Z-plane
 	Infile >> SourceType; // What kind of source for moisture 
-	Infile >> Dissipation;// Dissipation source if value is positive, increase moisture is negative 
+	Infile >> Dissipation;// The (negative)amount of moisture added to the material per second 
 	Infile >> sourcetime; // Total amount of time the source would act on the shell, for time longer than sourcetime source would be set to 0 
-	Infile >> SourceZ; // Total amount of time the source would act on the shell, for time longer than sourcetime source would be set to 0 
+	Infile >> SourceZ; // The Z-coordinate of the source 
+	Infile >> forceMD; // TODO: remove this 
 
 	LameFirst = constE*nu/(1+nu)/(1-2*nu);
 	LameSecond = constE/2/(1+nu);
-	params.SetParams(constE, nu);
 	
 	NTri=F.rows();
 	NNode=V.rows();	
-        
         Pos.resize(3*NNode);
         Vel.setZero(3*NNode);
 
@@ -102,7 +102,20 @@ int main(int argc, char* argv[]){
 	}
         Mass = VMass();
 	MassInv = InverseMass();
-        MachineDirection = CalcMD(GlobalMD);
+	MassVec = MasstoMatrix();
+	//TODO: Implement the correct MD calc for 3D
+	if (forceMD){
+	  MachineDirection.resize(2*NTri,2);
+	  for(int i=0; i<NTri; i++){
+	     MachineDirection(i,0) = 1;
+	     MachineDirection(i,1) = 0;
+	     MachineDirection(i+NTri,0) = 0;
+	     MachineDirection(i+NTri,1) = 1;
+          } 
+	}
+	else{
+          MachineDirection = CalcMD(GlobalMD);
+	}
         EdgeF=NeighborF(); 
         EdgeNV=VofEdgeN();
         MatrixXd FNbar(NTri,3);
@@ -117,8 +130,7 @@ int main(int argc, char* argv[]){
         IAold.resize(2*NTri,2);
         IBold.resize(2*NTri,2);
 	tcount =0; // Total time step
-	//while(true){
-	while(tcount<5){
+	while(true){
 	  if ((tcount%storefreq)==0){
 	  	stringstream FileName;
 	  	FileName << objname << tcount/storefreq+InitialNum << ".obj"; 
@@ -156,7 +168,7 @@ void CalcIbar(vector<Matrix2m> *abars, vector<Matrix2m> *bbars){
 //	Remove MD CD for now
  		tmp1=IA+t*IB;
 		tmp2=IA-t*IB;
-		//Canonical e1=(1,0), e2=(-1,1)
+		//Canonical e1=(1,0), e2=(-1,1), MachineDirection is the coefficient of the globe MD on the barycentric coord of this triangle.
 		MD<<MachineDirection(i,0)-MachineDirection(i,1),MachineDirection(i,1);
 		CD<<MachineDirection(i+NTri,0)-MachineDirection(i+NTri,1),MachineDirection(i+NTri,1);
 		//----------------------Method 1----------------------------------------
@@ -240,10 +252,95 @@ void CalcIbar(vector<Matrix2m> *abars, vector<Matrix2m> *bbars){
 	Ibartot = Itot;
 }
 
+MatrixXd CalcMD3d(Vector3d GMD){
+   int NTri = F.rows();
+   MatrixXd BaryMD(NTri,2);
+   Vector3d cb1, cb2, cb3;
+   cb1 = V.row(F(0,1))-V.row(F(0,0));
+   cb2 = V.row(F(0,2))-V.row(F(0,1));
+   cb3 = cb1.cross(cb2);
+   Matrix3d B;
+   B.col(0) = cb1;  
+   B.col(1) = cb2;  
+   B.col(2) = cb3;  
+   Vector3d tmp = B.inverse() * GMD;
+   BaryMD(0,0) = tmp(0); 
+   BaryMD(0,1) = tmp(1);
+   int CalcedFace[NTri];
+   for (int i=0; i<NTri; i++){
+       CalcedFace[i]=0;
+   }
+   CalcNextMD(&BaryMD,0,CalcedFace);  
+}
+
+void CalcNextMD(MatrixXd *BaryMD, int FaceID, int CalcedFace[]){
+  Vector3d curMD;
+  curMD << BaryMD->row(FaceID), 0;
+  for (int i=0; i<3 ; i++){
+      int curF = EdgeF(3*FaceID+i); 
+      if( curF > 0 && CalcedFace[curF]==0){
+        Vector3d tmp;
+        tmp = CalcNeighborMD(curMD, FaceID, i);
+	BaryMD->row(curF) << tmp(0), tmp(1);
+        CalcedFace[curF]=1;
+        CalcNextMD(BaryMD, curF, CalcedFace);
+      }
+   }
+}
+
+
+Vector3d CalcNeighborMD(Vector3d curMD, int currentF, int EdgeID){
+   Vector3d cb1, cb2, cb3, edge, ce2;
+   // cb1, cb2 are the barycentric vector of the current face
+   cb1 = V.row(F(currentF,1))-V.row(F(currentF,0));
+   cb2 = V.row(F(currentF,2))-V.row(F(currentF,1));
+   cb3 = cb1.cross(cb2);
+   if(EdgeID==0){
+     edge = cb1;
+   }
+   else if(EdgeID==1){
+     edge = cb2;
+   }
+   else if(EdgeID==2){
+     edge = V.row(F(currentF,0))-V.row(F(currentF,2));
+   }
+   Matrix3d rot;
+   rot = AngleAxisd(0.5*M_PI,cb3);
+   // ce2 is perpendicular to the shared edge and lay on the current face
+   ce2 = rot * edge;
+   
+   int neighborF = EdgeF(3*currentF+EdgeID);
+   Vector3d nb1, nb2, nb3, ne2;
+   nb1 = V.row(F(neighborF,1))-V.row(F(neighborF,0));
+   nb2 = V.row(F(neighborF,2))-V.row(F(neighborF,1));
+   nb3 = nb1.cross(nb2);
+   rot = AngleAxisd(0.5*M_PI,nb3);
+   // ne2 is perpendicular to the shared edge and lay on the neighboring face
+   ne2 = rot * edge;
+   
+   Matrix3d Bcur, Ecur, Enei, Bnei;
+   Bcur.col(0) = cb1;  
+   Bcur.col(1) = cb2;  
+   Bcur.col(2) = cb3;  
+   Ecur.col(0) = edge;  
+   Ecur.col(1) = ce2;  
+   Ecur.col(2) = cb3;  
+   Bnei.col(0) = nb1;  
+   Bnei.col(1) = nb2;  
+   Bnei.col(2) = nb3;  
+   Enei.col(0) = edge;  
+   Enei.col(1) = ne2;  
+   Enei.col(2) = nb3;
+
+   Vector3d nMD;
+   nMD = Bnei.inverse() * Enei * Ecur.inverse() * Bcur * curMD; 
+   
+   return nMD;
+}
 //CalcMD calculates GlobalMD in barycentric coordinate in each face
 MatrixXd CalcMD(MatrixXd GlobalMD){
 	Vector3d e1, e2;
-	Matrix2d A;
+	Matrix2d A, tmp;
 	MatrixXd MD(2*F.rows(),2);
         Vector2d GMD,GCD;
 //	GMD is defined as follow if MD is uniform throughout the paper
@@ -257,8 +354,13 @@ MatrixXd CalcMD(MatrixXd GlobalMD){
 	*/
 		e1 = V.row(F(i,1))-V.row(F(i,0));
         	e2 = V.row(F(i,2))-V.row(F(i,1));
-		A << e2(1), -e2(0), -e1(1), e1(0);
-		A *= 1/(e1(0)*e2(1)-e1(1)*e2(0));
+		
+		tmp << e1(0), e2(0), e1(1), e2(1);
+		A = tmp.inverse();
+	//	A << e2(1), -e2(0), -e1(1), e1(0);
+	//	A *= 1/(e1(0)*e2(1)-e1(1)*e2(0));	
+	//	cout << "Inv" << endl <<  Inv << endl << "A" << endl << A << endl;
+
 		Vector2d tmp1, tmp2;
 		tmp1 = A*GMD;
                 tmp2 = A*GCD;
@@ -311,25 +413,35 @@ void Sim(){
 
            // A biconjugate gradients solver
            //SparseQR<SparseMatrix<double>, COLAMDOrdering<int> >  solver;
-           BiCGSTAB<SparseMatrix<double> >  solver;
-           VectorXm dE(3*NNode);
-           SparseMatrix<double> hEnergy1(3*NNode,3*NNode), hEnergy2(3*NNode,3*NNode);
+           SimplicialLDLT<SparseMatrix<double> >  solver;
            // Solve with Newton's Method
 	   SimulationMesh *sm;
            
 	   //Use explicit Euler as the initial guess
            VectorXd guess = VectorXd(Pos);
-           guess = guess + delt * MassInv * Vel;
+           guess = guess + delt *  Vel;
 	   MatrixXd Vtemp;
+	   int count = 0;
            while(residual > ImpTolerance){
+             VectorXm dE(3*NNode), dE_Damp(3*NNode);
+             SparseMatrix<double> hEnergy1(3*NNode,3*NNode), hEnergy2(3*NNode,3*NNode),hDamp1(3*NNode,3*NNode), hDamp2(3*NNode,3*NNode);
+	     vector<Matrix2m> atemp, btemp;
  	     Vtemp = VectoMatrix(guess);
-             sm = new SimulationMesh(Vbar, Vtemp, F, t);
-             sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2, abars, bbars);
-             //Calculate force differential
+             sm = new SimulationMesh(Vbar, Vtemp, F, t, constE, nu);
+             sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2, &atemp, &btemp, abars, bbars);
+	     //Calculate damping force
+	     //TODO: add comment for only using cdamp1 in Implicit calculation
+             if(DampingForce_Enabled && tcount >0){
+                sm->testElasticEnergy(&dE_Damp, &hDamp1, &hDamp2, &atemp, &btemp, a_prev, b_prev);
+                dE += cdamp1 / delt * dE_Damp;
+                hEnergy1 += cdamp1 / delt * hDamp1;
+                hEnergy2 += cdamp1 / delt * hDamp2;
+             }
+	     //Calculate force differential
              SparseMatrix<double> dForces;
-             dForces = identityMatrix + delt * delt * MassInv * hEnergy1;
+             dForces = MassVec * identityMatrix + delt * delt * hEnergy1;
              //Calculate f(guess)
-             fguess = guess - Pos - delt *  Vel + delt * delt * MassInv * dE;
+             fguess = MassVec * guess - MassVec * Pos - MassVec * delt *  Vel + delt * delt * dE;
 
              // Solve dat!
              solver.compute(dForces);
@@ -339,16 +451,30 @@ void Sim(){
 
              // Calculate residual
              residual = fguess.norm();
-             //if (count%100==0){
-             //   cout <<  "residual" << endl << residual << endl;
-	     //}
-	     
+             
+             if (tcount%100==0 && count%50==0){
+                cout <<" tcount = " << tcount << "count = " << count << endl << residual << endl;
+	     }
+	     count++;
+           
+             delete sm;
 	   }
-	   Pos = guess;
+           Pos = guess;
 	   V = VectoMatrix(Pos);
-           sm = new SimulationMesh(Vbar, V, F, t);
-           sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2, abars, bbars);
+           VectorXm dE(3*NNode), dE_Damp(3*NNode);
+           SparseMatrix<double> hEnergy1(3*NNode,3*NNode), hEnergy2(3*NNode,3*NNode),hDamp1(3*NNode,3*NNode), hDamp2(3*NNode,3*NNode);
+	   vector<Matrix2m> atemp, btemp;
+           dE_Damp.setZero();
+           sm = new SimulationMesh(Vbar, V, F, t, constE, nu);
+           if(DampingForce_Enabled && tcount >0){
+                sm->testElasticEnergy(&dE_Damp, &hDamp1, &hDamp2, &atemp, &btemp, a_prev, b_prev);
+           }
+           sm->testElasticEnergy(&dE, &hEnergy1, &hEnergy2, &a_prev, &b_prev, abars, bbars);
+           dE += cdamp1 / delt * dE_Damp;
 	   Vel -= delt * MassInv * dE; 
+           delete sm;
+           //cout << "ForceImplicit" << endl << -0.5*dE << endl; 
+           // cout << "ForceExplicit" << endl << Force() << endl; 
 	}
         
 
@@ -383,12 +509,13 @@ void Sim(){
 	//Mtot_Mass=Mass_Total();
     	//Mtot_Stiffness=Stiffness_Total();
     	//Mtot_Stiffness*=DiffusionCoeff;
-	if(SourceType==2){
-           RHS_F = F_Total();
-	}    	
-        if ((int) (sourcetime/delt) == tcount){
+        if (tcount+InitialNum*storefreq >= (int) (sourcetime/delt)){
 	    RHS_F.setZero();
 	}
+        //If a constant source exists, make the assumption that a constant moist is added to the vertices and diffuse afterwards.
+        if(SourceType == 2){
+            Moisture_v += Moist_source;
+        }
         diffusion_prism();
         // Fix a few vertices from moving
         if (gflag==1){
@@ -420,6 +547,17 @@ VectorXd VMass(){
                 M(F(i,2))+=rho*areaT*t/3;
 	}
 	return M;
+}
+
+DiagonalMatrix<double,Dynamic> MasstoMatrix(){
+        VectorXd MInv(3*NNode);
+	for (int i=0; i<NNode; i++){
+	    double temp = Mass(i);
+	    MInv(3*i)=temp;
+	    MInv(3*i+1)=temp;
+	    MInv(3*i+2)=temp;
+	}
+	return MInv.asDiagonal();
 }
 
 DiagonalMatrix<double,Dynamic> InverseMass(){
@@ -492,6 +630,13 @@ MatrixXd Force(){
 		Inv=IAbar.inverse();
                 B=Inv*(IB-IBbar);
 		A=Inv*(IA-IAbar);
+		/*
+		if(tcount<2){
+		  cout << "Face " << i << endl;
+		  cout <<  "IAbar" << endl << IAbar << endl << "IA" << endl << IA << endl;
+		  cout <<  "IBbar" << endl << IBbar << endl << "IB" << endl << IB << endl;
+		}
+		*/
 		dI=DelI(V.row(F(i,0)),V.row(F(i,1)),V.row(F(i,2)));
 		dA=0.5*sqrt(IAbar.determinant());
 		c1=0.5*LameFirst*dA/24;
@@ -581,8 +726,8 @@ MatrixXd Force(){
 	FF = FF1+FF2+FDamp1+FDamp2;
 	/*// For Testing
 	if(tcount < 2){
-        cout << tcount << endl << "FF1" << endl << FF1 << endl << "FF2" << FF2 << endl;
-	cout << "FF" << endl << FF << endl;
+        cout << tcount << endl << "FF1" << endl << FF1 << endl;
+        cout << tcount << endl << "FF2" << endl << FF2 << endl;
 	}
         */
 	return FF;
@@ -774,7 +919,8 @@ Matrix3d rMatrix(Vector3d e1, Vector3d e2){
 
 //Diffusion in 3D using a prism element
 void diffusion_prism(){
-	SparseQR<SparseMatrix<double>, COLAMDOrdering<int> > solver;
+	//SparseQR<SparseMatrix<double>, COLAMDOrdering<int> > solver;
+        SimplicialLDLT<SparseMatrix<double> >  solver;
 	solver.compute(Mtot_Mass/delt+Mtot_Stiffness);
 	if(solver.info()!=Success) {
   		// decomposition failed
@@ -804,7 +950,10 @@ Vector6d UniTopF_prism(int i){
 	return Dissipation*M_Jacobian(i).determinant()*RHS_v/2;
 }
 
+//TODO:Wrong!!! Have to recalculate the value based on the integration in the prism 
+//o.w. neighboring vertices with 0 contribution will lead to negative moisture change
 //Appling a plane source from the bottom surface. i.e. soaking in water
+/*
 Vector6d PlaneSourceBot(int i){
 	Vector6d RHS_v;
         RHS_v.setZero();
@@ -817,11 +966,6 @@ Vector6d PlaneSourceBot(int i){
 	}
 	return Dissipation*M_Jacobian(i).determinant()*RHS_v/2;
 }
-/*Vector6d NoSource(int i, double ConstS){
-	Vector6d RHS_v;
-	RHS_v.setZero();
-	return RHS_v;
-}
 */
 
 VectorXd F_Total(){
@@ -830,7 +974,7 @@ VectorXd F_Total(){
 	Tot_F.setZero();
 	int NTri, index1, index2, index3, index4, index5, index6;
 	NTri=F.rows();
-	if(SourceType != 0){
+	if(SourceType != 0 && SourceType != 2){
 	   for(int i=0; i<NTri; i++){
 	   	Vec_F=funcRHS[SourceType-1](i);
 	   	index1=F(i,0);

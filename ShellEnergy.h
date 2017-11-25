@@ -30,6 +30,8 @@ scalar triangleBendingEnergy(
     const Matrix2m &bbar,
     scalar h,
     const MaterialParameters &params,
+    Matrix2m *a,
+    Matrix2m *b,
     Eigen::Matrix<scalar, 9, 1> *dEnergy,
     Eigen::Matrix<scalar, 9, 9> *hEnergyInexact);
 
@@ -42,6 +44,8 @@ scalar shellEnergy(
     const std::vector<Matrix2m> &bbars,
     const VectorXm &faceThicknesses,
     const MaterialParameters &params,
+    std::vector<Matrix2m> *acurrent,
+    std::vector<Matrix2m> *bcurrent,
     VectorXm *dEnergy,
     std::vector<Eigen::Triplet<scalar> > *hEnergyExact,
     std::vector<Eigen::Triplet<scalar> > *hEnergyInexact,

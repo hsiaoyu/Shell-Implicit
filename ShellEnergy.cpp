@@ -99,6 +99,8 @@ scalar triangleBendingEnergy(
     const Matrix2m &bbar,
     scalar h,
     const MaterialParameters &params,
+    Matrix2m *a,
+    Matrix2m *b,
     Eigen::Matrix<scalar, 18, 1> *dEnergy,
     Eigen::Matrix<scalar, 18, 18> *hEnergyInexact)
 {
@@ -134,7 +136,7 @@ scalar triangleBendingEnergy(
         ni[i] = mi[i] / mi[i].norm();
     }
 
-    Matrix2m a = firstFundamentalForm(p0, p1, p2);
+    *a = firstFundamentalForm(p0, p1, p2);
     Matrix2m abarinv = abar.inverse();
     Matrix<scalar, 3, 2> r;
     r.col(0) = p1 - p0;
@@ -144,8 +146,8 @@ scalar triangleBendingEnergy(
     n.col(0) = ni[0] - ni[1];
     n.col(1) = ni[0] - ni[2];
     
-    Matrix2m b = r.transpose()*n + n.transpose()*r;
-    Matrix2m M = abarinv*(b - bbar);
+    *b = r.transpose()*n + n.transpose()*r;
+    Matrix2m M = abarinv*(*b - bbar);
     scalar dA = 0.5 * sqrt(abar.determinant());
 
     scalar energy = h*h*h / 12.0 * (params.LameAlpha() / 2.0 * M.trace()*M.trace() + params.LameBeta() * (M*M).trace()) * dA;
@@ -243,6 +245,8 @@ scalar shellEnergy(
     const std::vector<Matrix2m> &bbars,
     const VectorXm &faceThicknesses,
     const MaterialParameters &params,
+    std::vector<Matrix2m> *acurrent,
+    std::vector<Matrix2m> *bcurrent,
     VectorXm *dEnergy,
     std::vector<Eigen::Triplet<scalar> > *hEnergyExact,
     std::vector<Eigen::Triplet<scalar> > *hEnergyInexact,
@@ -314,9 +318,9 @@ scalar shellEnergy(
         Matrix<scalar, 18, 18> hE;
         Vector3i face = F.row(i);
         Vector3i wing = faceWings.row(i);
+        Matrix2m atemp, btemp;
    //     Matrix2m bbar;
    //     bbar.setZero();
-
         Vector3m wingverts[3];
         for (int j = 0; j < 3; j++)
             if (wing[j] != -1)
@@ -325,9 +329,17 @@ scalar shellEnergy(
             wing[0] == -1 ? NULL : &wingverts[0],
             wing[1] == -1 ? NULL : &wingverts[1],
             wing[2] == -1 ? NULL : &wingverts[2],
-            abars[i], bbars[i], faceThicknesses[i], params, dEnergy ? &dE : NULL, (hEnergyExact || hEnergyInexact) ? &hE : NULL);        
+            abars[i], bbars[i], faceThicknesses[i], params, &atemp, &btemp, dEnergy ? &dE : NULL, (hEnergyExact || hEnergyInexact) ? &hE : NULL);        
         
         result += benergy;
+        
+        if (acurrent){
+            acurrent->push_back(atemp);
+        }
+        if (bcurrent){
+            bcurrent->push_back(btemp);
+        }
+
         if (triangleEnergies)
             (*triangleEnergies)[i] += benergy;
 

@@ -12,9 +12,13 @@ typedef Vector6d (*FuncRHS) (int);
 
 void CalcIbar(std::vector<Matrix2m> *abars, std::vector<Matrix2m> *bbars);
 MatrixXd CalcMD(MatrixXd GlobalMD);
+MatrixXd CalcMD3d(Vector3d);
+void CalcNextMD(MatrixXd *BaryMD, int FaceID, int CalcedFace[]);
+Vector3d CalcNeighborMD(Vector3d curMD, int currentF, int EdgeID);
 void Sim();
 VectorXd VMass();
 DiagonalMatrix<double,Dynamic> InverseMass();
+DiagonalMatrix<double,Dynamic> MasstoMatrix();
 MatrixXd VectoMatrix(VectorXd);
 Vector3d edgeV(Vector3d, Vector3d);
 Matrix3d rMatrix(Vector3d, Vector3d);

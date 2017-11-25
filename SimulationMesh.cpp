@@ -117,7 +117,7 @@ SimulationMesh *parseCirclePacking(const std::string &vertexFile, const std::str
     return result;
 }
 */
-SimulationMesh::SimulationMesh(const Eigen::MatrixX3d & Vbar, const Eigen::MatrixX3d & V, const Eigen::MatrixX3i & Fin, double thickness)
+SimulationMesh::SimulationMesh(const Eigen::MatrixX3d & Vbar, const Eigen::MatrixX3d & V, const Eigen::MatrixX3i & Fin, double thickness, double youngs, double poisson)
 {
     int nverts = (int)V.rows();
     int nfaces = (int)Fin.rows();
@@ -139,6 +139,7 @@ SimulationMesh::SimulationMesh(const Eigen::MatrixX3d & Vbar, const Eigen::Matri
     }
 
     buildFaceWings();
+    SetParam(youngs,poisson);
 }
 
 /*  // The original copy of the code
@@ -195,7 +196,7 @@ void SimulationMesh::buildFaceWings()
 
 //void SimulationMesh::testElasticEnergy()
 //void SimulationMesh::testElasticEnergy(const std::vector<Matrix2m> &abars, const std::vector<Matrix2m> &bbars)
-void SimulationMesh::testElasticEnergy(VectorXm *dE, Eigen::SparseMatrix<double> *hEnergy1, Eigen::SparseMatrix<double> *hEnergy2, const std::vector<Matrix2m> &abars, const std::vector<Matrix2m> &bbars)
+void SimulationMesh::testElasticEnergy(VectorXm *dE, Eigen::SparseMatrix<double> *hEnergy1, Eigen::SparseMatrix<double> *hEnergy2, std::vector<Matrix2m> *acurrent, std::vector<Matrix2m> *bcurrent, const std::vector<Matrix2m> &abars, const std::vector<Matrix2m> &bbars)
 {
     int nDOF = originalV.rows() *3;
     dE->resize(nDOF);
@@ -204,8 +205,10 @@ void SimulationMesh::testElasticEnergy(VectorXm *dE, Eigen::SparseMatrix<double>
     hEnergy1->setZero();
     hEnergy2->resize(nDOF, nDOF );
     hEnergy2->setZero();
+    acurrent->clear();
+    bcurrent->clear();
     std::vector<Eigen::Triplet<scalar> > hEnergyList1, hEnergyList2;
-    scalar result = shellEnergy(originalV, F, faceWings, baras, bbars, faceThicknesses, params, dE, &hEnergyList1, &hEnergyList2, NULL);
+    scalar result = shellEnergy(originalV, F, faceWings, abars, bbars, faceThicknesses, params, acurrent, bcurrent, dE, &hEnergyList1, &hEnergyList2, NULL);
     hEnergy1->setFromTriplets(hEnergyList1.begin(), hEnergyList1.end());
     hEnergy2->setFromTriplets(hEnergyList2.begin(), hEnergyList2.end());
     //cout << "Force: " << endl << *dE << endl;
